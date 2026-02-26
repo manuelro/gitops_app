@@ -1,0 +1,50 @@
+name: build-push-and-promote
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_REGISTRY: 127.0.0.1:5001
+      CLIENT_IMAGE_NAME: demo-client
+      API_IMAGE_NAME: demo-api
+      IMAGE_TAG_STRATEGY: git-sha
+      AUTO_PROMOTE_INFRA: "true"
+      INFRA_REPO_URL: http://gitops-admin:change-me-local-2026@host.docker.internal:3000/gitops/infra.git
+      INFRA_BRANCH: main
+      INFRA_OVERLAY: local
+      GIT_AUTHOR_NAME: App Auto Promote
+      GIT_AUTHOR_EMAIL: app-autopromote@example.local
+      GIT_COMMITTER_NAME: App Auto Promote
+      GIT_COMMITTER_EMAIL: app-autopromote@example.local
+    steps:
+      - name: Checkout app repository
+        run: |
+          rm -rf "${GITHUB_WORKSPACE}/repo"
+          git clone "http://gitops-admin:change-me-local-2026@host.docker.internal:3000/${GITHUB_REPOSITORY}.git" "${GITHUB_WORKSPACE}/repo"
+          git -C "${GITHUB_WORKSPACE}/repo" checkout "${GITHUB_SHA}"
+
+      - name: Install Docker CLI
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends docker.io ca-certificates curl
+
+      - name: Login to registry (if credentials are provided)
+        if: ${{ secrets.REGISTRY_USERNAME != '' && secrets.REGISTRY_PASSWORD != '' }}
+        run: |
+          echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login "${IMAGE_REGISTRY}" -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+
+      - name: Configure git credentials for infra push
+        run: |
+          if [ -n "${{ secrets.GITEA_USERNAME }}" ] && [ -n "${{ secrets.GITEA_PASSWORD }}" ]; then
+            git config --global url."http://${{ secrets.GITEA_USERNAME }}:${{ secrets.GITEA_PASSWORD }}@host.docker.internal:3000/".insteadOf "http://host.docker.internal:3000/"
+            git config --global url."http://${{ secrets.GITEA_USERNAME }}:${{ secrets.GITEA_PASSWORD }}@localhost:3000/".insteadOf "http://localhost:3000/"
+          fi
+
+      - name: Build, push, and promote infra
+        run: bash "${GITHUB_WORKSPACE}/repo/scripts/build-and-push.sh"
